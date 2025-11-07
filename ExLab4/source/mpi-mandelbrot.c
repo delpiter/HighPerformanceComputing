@@ -94,36 +94,39 @@ Example:
 #include <assert.h>
 #include <mpi.h>
 
+#define MASTER_ID 0
+
 const int MAXIT = 100;
 
 /* The __attribute__(( ... )) definition is gcc-specific, and tells
    the compiler that the fields of this structure should not be padded
    or aligned in any way. */
-typedef struct __attribute__((__packed__)) {
-    uint8_t r;  /* red   */
-    uint8_t g;  /* green */
-    uint8_t b;  /* blue  */
+typedef struct __attribute__((__packed__))
+{
+    uint8_t r; /* red   */
+    uint8_t g; /* green */
+    uint8_t b; /* blue  */
 } pixel_t;
 
 /* color gradient from https://stackoverflow.com/questions/16500656/which-color-gradient-is-used-to-color-mandelbrot-in-wikipedia */
 const pixel_t colors[] = {
-    { 66,  30,  15}, /* r, g, b */
-    { 25,   7,  26},
-    {  9,   1,  47},
-    {  4,   4,  73},
-    {  0,   7, 100},
-    { 12,  44, 138},
-    { 24,  82, 177},
-    { 57, 125, 209},
+    {66, 30, 15}, /* r, g, b */
+    {25, 7, 26},
+    {9, 1, 47},
+    {4, 4, 73},
+    {0, 7, 100},
+    {12, 44, 138},
+    {24, 82, 177},
+    {57, 125, 209},
     {134, 181, 229},
     {211, 236, 248},
     {241, 233, 191},
-    {248, 201,  95},
-    {255, 170,   0},
-    {204, 128,   0},
-    {153,  87,   0},
-    {106,  52,   3} };
-const int NCOLORS = sizeof(colors)/sizeof(colors[0]);
+    {248, 201, 95},
+    {255, 170, 0},
+    {204, 128, 0},
+    {153, 87, 0},
+    {106, 52, 3}};
+const int NCOLORS = sizeof(colors) / sizeof(colors[0]);
 
 /*
  * Iterate the recurrence:
@@ -134,13 +137,14 @@ const int NCOLORS = sizeof(colors)/sizeof(colors[0]);
  * Returns the first `n` such that `z_n > bound`, or `MAXIT` if `z_n` is below
  * `bound` after `MAXIT` iterations.
  */
-int iterate( float cx, float cy )
+int iterate(float cx, float cy)
 {
     float x = 0.0f, y = 0.0f, xnew, ynew;
     int it;
-    for ( it = 0; (it < MAXIT) && (x*x + y*y <= 2.0*2.0); it++ ) {
-        xnew = x*x - y*y + cx;
-        ynew = 2.0*x*y + cy;
+    for (it = 0; (it < MAXIT) && (x * x + y * y <= 2.0 * 2.0); it++)
+    {
+        xnew = x * x - y * y + cx;
+        ynew = 2.0 * x * y + cy;
         x = xnew;
         y = ynew;
     }
@@ -153,24 +157,29 @@ int iterate( float cx, float cy )
    image will be stored; in other words, this function writes to
    pixels p[0], p[1], ... `xsize` and `ysize` MUST be the sizes
    of the WHOLE image. */
-void draw_lines( int ystart, int yend, pixel_t* p, int xsize, int ysize )
+void draw_lines(int ystart, int yend, pixel_t *p, int xsize, int ysize)
 {
     const float XMIN = -2.3, XMAX = 1.0;
-    const float SCALE = (XMAX - XMIN)*ysize / xsize;
-    const float YMIN = -SCALE/2, YMAX = SCALE/2;
+    const float SCALE = (XMAX - XMIN) * ysize / xsize;
+    const float YMIN = -SCALE / 2, YMAX = SCALE / 2;
     int x, y;
 
-    for ( y = ystart; y < yend; y++) {
-        for ( x = 0; x < xsize; x++ ) {
-             const float re = XMIN + (XMAX - XMIN) * (float)(x) / (xsize - 1);
-             const float im = YMAX - (YMAX - YMIN) * (float)(y) / (ysize - 1);
-             const int v = iterate(re, im);
+    for (y = ystart; y < yend; y++)
+    {
+        for (x = 0; x < xsize; x++)
+        {
+            const float re = XMIN + (XMAX - XMIN) * (float)(x) / (xsize - 1);
+            const float im = YMAX - (YMAX - YMIN) * (float)(y) / (ysize - 1);
+            const int v = iterate(re, im);
 
-             if (v < MAXIT) {
+            if (v < MAXIT)
+            {
                 p->r = colors[v % NCOLORS].r;
                 p->g = colors[v % NCOLORS].g;
                 p->b = colors[v % NCOLORS].b;
-            } else {
+            }
+            else
+            {
                 p->r = p->g = p->b = 0;
             }
             p++;
@@ -178,30 +187,39 @@ void draw_lines( int ystart, int yend, pixel_t* p, int xsize, int ysize )
     }
 }
 
-int main( int argc, char *argv[] )
+int main(int argc, char *argv[])
 {
     int my_rank, comm_sz;
     FILE *out = NULL;
-    const char* fname="mpi-mandelbrot.ppm";
+    const char *fname = "mpi-mandelbrot.ppm";
     pixel_t *bitmap = NULL;
     int xsize, ysize;
 
     MPI_Init(&argc, &argv);
+
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
 
-    if ( argc > 1 ) {
+    int recvcounts[comm_sz];
+    int displs[comm_sz];
+
+    if (argc > 1)
+    {
         ysize = atoi(argv[1]);
-    } else {
+    }
+    else
+    {
         ysize = 1024;
     }
 
     xsize = ysize * 1.4;
 
     /* xsize and ysize are known to all processes */
-    if ( 0 == my_rank ) {
+    if (MASTER_ID == my_rank)
+    {
         out = fopen(fname, "w");
-        if ( !out ) {
+        if (!out)
+        {
             fprintf(stderr, "Error: cannot create %s\n", fname);
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
         }
@@ -212,16 +230,52 @@ int main( int argc, char *argv[] )
         fprintf(out, "255\n");
 
         /* Allocate the complete bitmap */
-        bitmap = (pixel_t*)malloc(xsize*ysize*sizeof(*bitmap));
+        bitmap = (pixel_t *)malloc(xsize * ysize * sizeof(*bitmap));
         assert(bitmap != NULL);
-        /* [TODO] This is not a true parallel version, since the master
-           does everything */
-        draw_lines(0, ysize, bitmap, xsize, ysize);
-        fwrite(bitmap, sizeof(*bitmap), xsize*ysize, out);
+
+        for (int i = 0; i < comm_sz; i++)
+        {
+            int proc_start = (ysize * i) / comm_sz;
+            int proc_end = (ysize * (i + 1)) / comm_sz;
+
+            recvcounts[i] = xsize * (proc_end - proc_start) * sizeof(*bitmap);
+            displs[i] = xsize * proc_start * sizeof(*bitmap);
+            // printf("Recieve count process %d: %d \n", i, recvcounts[i]);
+            // printf("Displacement process %d : %d \n", i, displs[i]);
+        }
+    }
+
+    /* Initialize local variables */
+    pixel_t *local_bitmap = NULL;
+    int my_start = (ysize * my_rank) / comm_sz;
+    int my_end = (ysize * (my_rank + 1)) / comm_sz;
+    int local_count = xsize * (my_end - my_start) * sizeof(*bitmap);
+
+    /* Allocate the local bitmap */
+    local_bitmap = (pixel_t *)malloc(xsize * (my_end - my_start) * sizeof(*bitmap));
+    assert(local_bitmap != NULL);
+
+    draw_lines(my_start, my_end, local_bitmap, xsize, ysize);
+
+    /* Gather the local solution to the master process */
+    MPI_Gatherv(local_bitmap,
+                local_count,
+                MPI_BYTE,
+                bitmap,
+                recvcounts,
+                displs,
+                MPI_BYTE,
+                MASTER_ID,
+                MPI_COMM_WORLD);
+
+    free(local_bitmap);
+
+    if (my_rank == MASTER_ID)
+    {
+        fwrite(bitmap, sizeof(*bitmap), xsize * ysize, out);
         fclose(out);
         free(bitmap);
     }
-
 
     MPI_Finalize();
 
