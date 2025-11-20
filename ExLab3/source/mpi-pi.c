@@ -148,6 +148,8 @@ int main(int argc, char *argv[])
     printf("Proc %d generating %d points...\n", my_rank, local_npoints);
     int local_inside = generate_points(local_npoints);
 
+    /* Inefficient */
+    /*
     if (my_rank > 0)
     {
         MPI_Send(&local_inside,
@@ -175,8 +177,20 @@ int main(int argc, char *argv[])
 
         pi_approx = 4.0 * inside / (double)npoints;
         printf("PI approximation is %f (true value=%f, rel error=%.3f%%)\n", pi_approx, M_PI, 100.0 * fabs(pi_approx - M_PI) / M_PI);
-    }
+        */
+    MPI_Reduce(&local_inside,        // send buffer
+               &inside,              // receive buffer
+               1,                    // count
+               MPI_INT,              // datatype
+               MPI_SUM,              // operation
+               MPI_MASTER_PROCESSOR, // root
+               MPI_COMM_WORLD);      // communicator
 
+    if (my_rank == MPI_MASTER_PROCESSOR)
+    {
+        pi_approx = 4.0 * inside / (double)npoints;
+        printf("PI approximation is %f (true value=%f, rel error=%.3f%%)\n", pi_approx, M_PI, 100.0 * fabs(pi_approx - M_PI) / M_PI);
+    }
     MPI_Finalize();
     return EXIT_SUCCESS;
 }
