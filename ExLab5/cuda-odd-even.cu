@@ -50,10 +50,10 @@ phases. The kernel looks like this:
 ```C
 __global__ void odd_even_step_bad( int *x, int n, int phase )
 {
-	const int idx = threadIdx.x + blockIdx.x * blockDim.x;
-	if ( (idx < n-1) && ((idx % 2) == (phase % 2)) ) {
-		cmp_and_swap(&x[idx], &x[idx+1]);
-	}
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if ( (idx < n-1) && ((idx % 2) == (phase % 2)) ) {
+        cmp_and_swap(&x[idx], &x[idx+1]);
+    }
 }
 ```
 
@@ -108,54 +108,102 @@ Example:
 
 #include "hpc.h"
 
+#define BLKSIZE 1024
+
 /* if *a > *b, swap them. Otherwise do nothing */
-void cmp_and_swap( int* a, int* b )
+/*
+    To compile this as device code add __device__
+    Both __host__ and __device__ can be used at the same time
+*/
+__device__ __host__ void cmp_and_swap(int *a, int *b)
 {
-    if ( *a > *b ) {
+    if (*a > *b)
+    {
         int tmp = *a;
         *a = *b;
         *b = tmp;
     }
 }
 
-
-/* Odd-even transposition sort */
-void odd_even_sort( int* v, int n )
+__global__ void odd_even_step_bad(int *x, int n, int phase)
 {
-    for (int phase = 0; phase < n; phase++) {
-        if ( phase % 2 == 0 ) {
-            /* (even, odd) comparisons */
-            for (int i=0; i<n-1; i += 2 ) {
-                cmp_and_swap( &v[i], &v[i+1] );
-            }
-        } else {
-            /* (odd, even) comparisons */
-            for (int i=1; i<n-1; i += 2 ) {
-                cmp_and_swap( &v[i], &v[i+1] );
-            }
-        }
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if ((idx < n - 1) && ((idx % 2) == (phase % 2)))
+    {
+        cmp_and_swap(&x[idx], &x[idx + 1]);
     }
 }
 
+__global__ void odd_even_step_good(int *x, int n, int phase)
+{
+    int idx = (threadIdx.x + blockIdx.x * blockDim.x) * 2 + (phase % 2);
+
+    if ((idx < n - 1))
+    {
+        cmp_and_swap(&x[idx], &x[idx + 1]);
+    }
+}
+
+/* Odd-even transposition sort */
+void odd_even_sort(int *v, int n)
+{
+    int *d_v;
+    const int SIZE = n * sizeof(*d_v);
+    const int NBLOCKS = (n + BLKSIZE - 1) / BLKSIZE;
+
+    cudaSafeCall(cudaMalloc((void **)&d_v, SIZE));
+    cudaSafeCall(cudaMemcpy(d_v, v, SIZE, cudaMemcpyHostToDevice));
+
+    for (int phase = 0; phase < n; phase++)
+    {
+        odd_even_step_bad<<<NBLOCKS, BLKSIZE>>>(d_v, n, phase);
+        cudaCheckError();
+    }
+
+    cudaSafeCall(cudaMemcpy(v, d_v, SIZE, cudaMemcpyDeviceToHost));
+    cudaFree(d_v);
+}
+
+void odd_even_sort_good(int *v, int n)
+{
+    int *d_v;
+    const int SIZE = n * sizeof(*d_v);
+    const int NTHREADS = (n / 2) < BLKSIZE ? (n / 2) : BLKSIZE;
+    const int NBLOCKS = ((n / 2) + NTHREADS - 1) / NTHREADS;
+
+    cudaSafeCall(cudaMalloc((void **)&d_v, SIZE));
+    cudaSafeCall(cudaMemcpy(d_v, v, SIZE, cudaMemcpyHostToDevice));
+
+    for (int phase = 0; phase < n; phase++)
+    {
+        odd_even_step_good<<<NBLOCKS, NTHREADS>>>(d_v, n, phase);
+        cudaCheckError();
+    }
+
+    cudaSafeCall(cudaMemcpy(v, d_v, SIZE, cudaMemcpyDeviceToHost));
+    cudaFree(d_v);
+}
 
 /**
  * Return a random integer in the range [a..b]
  */
 int randab(int a, int b)
 {
-    return a + (rand() % (b-a+1));
+    return a + (rand() % (b - a + 1));
 }
 
 /**
  * Fill vector x with a random permutation of the integers 0..n-1
  */
-void fill( int *x, int n )
+void fill(int *x, int n)
 {
-    for (int i=0; i<n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         x[i] = i;
     }
-    for(int i=0; i<n-1; i++) {
-        const int j = randab(i, n-1);
+    for (int i = 0; i < n - 1; i++)
+    {
+        const int j = randab(i, n - 1);
         const int tmp = x[i];
         x[i] = x[j];
         x[j] = tmp;
@@ -165,10 +213,12 @@ void fill( int *x, int n )
 /**
  * Check correctness of the result
  */
-int check( const int *x, int n )
+int check(const int *x, int n)
 {
-    for (int i=0; i<n; i++) {
-        if (x[i] != i) {
+    for (int i = 0; i < n; i++)
+    {
+        if (x[i] != i)
+        {
             fprintf(stderr, "Check FAILED: x[%d]=%d, expected %d\n", i, x[i], i);
             return 0;
         }
@@ -177,23 +227,27 @@ int check( const int *x, int n )
     return 1;
 }
 
-int main( int argc, char *argv[] )
+int main(int argc, char *argv[])
 {
     int *x;
-    int n = 128*1024;
-    const int MAX_N = 512*1024*1024;
+    int *x_g;
+    int n = 128 * 1024;
+    const int MAX_N = 512 * 1024 * 1024;
     double tstart, elapsed;
 
-    if ( argc > 2 ) {
+    if (argc > 2)
+    {
         fprintf(stderr, "Usage: %s [len]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    if ( argc > 1 ) {
+    if (argc > 1)
+    {
         n = atoi(argv[1]);
     }
 
-    if ( n > MAX_N ) {
+    if (n > MAX_N)
+    {
         fprintf(stderr, "FATAL: the maximum length is %d\n", MAX_N);
         return EXIT_FAILURE;
     }
@@ -201,20 +255,29 @@ int main( int argc, char *argv[] )
     const size_t SIZE = n * sizeof(*x);
 
     /* Allocate space for x on host */
-    x = (int*)malloc(SIZE); assert(x != NULL);
+    x = (int *)malloc(SIZE);
+    x_g = (int *)malloc(SIZE);
+
+    assert(x != NULL);
     fill(x, n);
+    memcpy(x_g, x, SIZE);
 
     tstart = hpc_gettime();
     odd_even_sort(x, n);
     elapsed = hpc_gettime() - tstart;
     printf("Sorted %d elements in %f seconds\n", n, elapsed);
 
+    tstart = hpc_gettime();
+    odd_even_sort_good(x_g, n);
+    elapsed = hpc_gettime() - tstart;
+    printf("Sorted %d elements in %f seconds\n", n, elapsed);
+
     /* Check result */
     check(x, n);
-
-
+    check(x_g, n);
     /* Cleanup */
     free(x);
+    free(x_g);
 
     return EXIT_SUCCESS;
 }
