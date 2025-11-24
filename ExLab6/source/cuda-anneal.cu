@@ -222,7 +222,7 @@ Example:
 - [hpc.h](hpc.h)
 
 ***/
-#include "../resource/hpc.h"
+#include "hpc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -340,11 +340,11 @@ __global__ void copy_left_right(cell_t *grid, int ext_width, int ext_height)
    [TODO] This function should be transformed into a kernel. */
 __global__ void step(cell_t *cur, cell_t *next, int ext_width, int ext_height)
 {
-    __shared__ cell_t *buff[(BLKDIM2D + 2) * 2];
-    const int LEFT = 1;
-    const int RIGHT = ext_width - 2;
-    const int TOP = 1;
-    const int BOTTOM = ext_height - 2;
+    // __shared__ cell_t *buff[(BLKDIM2D + 2) * 2];
+    // const int LEFT = 1;
+    // const int RIGHT = ext_width - 2;
+    // const int TOP = 1;
+    // const int BOTTOM = ext_height - 2;
 
     const int i = 1 + threadIdx.y + blockIdx.y * blockDim.y;
     const int j = 1 + threadIdx.x + blockIdx.x * blockDim.x;
@@ -360,6 +360,7 @@ __global__ void step(cell_t *cur, cell_t *next, int ext_width, int ext_height)
             nblack += *IDX(cur, ext_width, i + di, j + dj);
         }
     }
+
     *IDX(next, ext_width, i, j) = (nblack >= 6 || nblack == 4);
     //     }
     // }
@@ -419,6 +420,7 @@ void write_pbm(cell_t *cur, int ext_width, int ext_height, int stepno)
 int main(int argc, char *argv[])
 {
     cell_t *cur, *next;
+    cell_t *d_cur, *d_next;
     int nsteps = 64, width = 512, height = 512, s;
     const int MAXN = 2048;
 
@@ -461,6 +463,11 @@ int main(int argc, char *argv[])
     assert(next != NULL);
     init(cur, ext_width, ext_height, 0.5);
 
+    cudaSafeCall(cudaMalloc((void **)&d_cur, ext_size));
+    cudaSafeCall(cudaMalloc((void **)&d_next, ext_size));
+
+    cudaSafeCall(cudaMemcpy(d_cur, cur, ext_size, cudaMemcpyHostToDevice));
+
     /* 2D blocks to update the domain */
     const dim3 stepBlock(BLKDIM2D, BLKDIM2D);
     const dim3 stepGrid((width + BLKDIM2D - 1) / BLKDIM2D, (height + BLKDIM2D - 1) / BLKDIM2D);
@@ -473,22 +480,38 @@ int main(int argc, char *argv[])
     const dim3 copyTBGrid((ext_width + BLKDIM - 1) / BLKDIM);
 
     const double tstart = hpc_gettime();
-    /* [TODO] */
     for (s = 0; s < nsteps; s++)
     {
-        copy_top_bottom<<<copyTBGrid, copyTBBlock>>>(cur, ext_width, ext_height);
-        copy_left_right<<<copyLRGrid, copyLRBlock>>>(cur, ext_width, ext_height);
+        copy_top_bottom<<<copyTBGrid, copyTBBlock>>>(d_cur, ext_width, ext_height);
+        cudaCheckError();
+        // printf("Copied Top-Bottom Ghost Cells\n");
+        copy_left_right<<<copyLRGrid, copyLRBlock>>>(d_cur, ext_width, ext_height);
+        // printf("Copied Left-Right Ghost Cells\n");
         cudaCheckError();
 #ifdef DUMPALL
         /* Does not work when parallelized, you need to update the host memory */
         write_pbm(cur, ext_width, ext_height, s);
 #endif
-        step<<<stepGrid, stepBlock>>>(cur, next, ext_width, ext_height);
-        cell_t *tmp = cur;
-        cur = next;
-        next = tmp;
+        step<<<stepGrid, stepBlock>>>(d_cur, d_next, ext_width, ext_height);
+        cudaCheckError();
+        // printf("Completed Step %d\n", s);
+
+        /* WHY CAN I DO THIS */
+        cell_t *d_tmp = d_cur;
+        d_cur = d_next;
+        d_next = d_tmp;
+
+        // cell_t *tmp = cur;
+        // cur = next;
+        // next = tmp;
     }
     const double elapsed = hpc_gettime() - tstart;
+
+    cudaSafeCall((cudaMemcpy(cur, d_cur, ext_size, cudaMemcpyDeviceToHost)));
+
+    cudaFree(d_cur);
+    cudaFree(d_next);
+
     write_pbm(cur, ext_width, ext_height, s);
     free(cur);
     free(next);
