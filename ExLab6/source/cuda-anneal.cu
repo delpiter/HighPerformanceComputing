@@ -222,7 +222,7 @@ Example:
 - [hpc.h](hpc.h)
 
 ***/
-#include "hpc.h"
+#include "../resource/hpc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
